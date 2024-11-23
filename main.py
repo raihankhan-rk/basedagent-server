@@ -3,10 +3,11 @@ import sys
 import time
 
 from langchain_core.messages import HumanMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
-
+from langchain_core.runnables.history import RunnableWithMessageHistory
 # Import CDP Agentkit Langchain Extension.
 from cdp_langchain.agent_toolkits import CdpToolkit
 from cdp_langchain.utils import CdpAgentkitWrapper
@@ -23,29 +24,22 @@ load_dotenv()
 wallet_data_file = "wallet_data.txt"
 
 
-def initialize_agent():
+def initialize_agent(values: dict = None, history=None):
     """Initialize the agent with CDP Agentkit."""
     # Initialize LLM.
     llm = ChatOpenAI(model="gpt-4o-mini")
 
-    wallet_data = None
-
-    if os.path.exists(wallet_data_file):
-        with open(wallet_data_file) as f:
-            wallet_data = f.read()
-
     # Configure CDP Agentkit Langchain Extension.
-    values = {}
-    if wallet_data is not None:
-        # If there is a persisted agentic wallet, load it and pass to the CDP Agentkit Wrapper.
-        values = {"cdp_wallet_data": wallet_data}
+    if values is None:
+        values = {}
+        
+        # Only read from file if no values provided
+        if os.path.exists(wallet_data_file):
+            with open(wallet_data_file) as f:
+                wallet_data = f.read()
+                values = {"cdp_wallet_data": wallet_data}
 
     agentkit = CdpAgentkitWrapper(**values)
-
-    # persist the agent's CDP MPC Wallet Data.
-    wallet_data = agentkit.export_wallet()
-    with open(wallet_data_file, "w") as f:
-        f.write(wallet_data)
 
     # Initialize CDP Agentkit Toolkit and get tools.
     cdp_toolkit = CdpToolkit.from_cdp_agentkit_wrapper(agentkit)
@@ -63,45 +57,31 @@ def initialize_agent():
 
     # Store buffered conversation history in memory.
     memory = MemorySaver()
-    config = {"configurable": {"thread_id": "CDP Agentkit Chatbot Example!"}}
-
+    
     # Create ReAct Agent using the LLM and CDP Agentkit tools.
-    return create_react_agent(
+    chain = create_react_agent(
         llm,
         tools=tools,
         checkpointer=memory,
         state_modifier=SYSTEM_PROMPT,
-    ), config
+    )
 
+    # If history is provided, wrap the chain with message history
+    if history:
+        chain = RunnableWithMessageHistory(
+            chain,
+            lambda session_id: history,
+            input_messages_key="messages",
+            history_messages_key="history"
+        )
 
-# Autonomous Mode
-def run_autonomous_mode(agent_executor, config, interval=10):
-    """Run the agent autonomously with specified intervals."""
-    print("Starting autonomous mode...")
-    while True:
-        try:
-            # Provide instructions autonomously
-            thought = (
-                "Be creative and do something interesting on the blockchain. "
-                "Choose an action or set of actions and execute it that highlights your abilities."
-            )
-
-            # Run agent in autonomous mode
-            for chunk in agent_executor.stream(
-                {"messages": [HumanMessage(content=thought)]}, config
-            ):
-                if "agent" in chunk:
-                    print(chunk["agent"]["messages"][0].content)
-                elif "tools" in chunk:
-                    print(chunk["tools"]["messages"][0].content)
-                print("-------------------")
-
-            # Wait before the next action
-            time.sleep(interval)
-
-        except KeyboardInterrupt:
-            print("Goodbye Agent!")
-            sys.exit(0)
+    # Return both session_id and thread_id in config
+    return chain, {
+        "configurable": {
+            "session_id": "default",
+            "thread_id": "default"  # Required by langgraph checkpointer
+        }
+    }
 
 
 # Chat Mode
@@ -116,7 +96,8 @@ def run_chat_mode(agent_executor, config):
 
             # Run agent with the user's input in chat mode
             for chunk in agent_executor.stream(
-                {"messages": [HumanMessage(content=user_input)]}, config
+                {"messages": [HumanMessage(content=user_input)]},
+                {"configurable": {"session_id": config["configurable"]["session_id"]}}
             ):
                 if "agent" in chunk:
                     print(chunk["agent"]["messages"][0].content)
@@ -128,33 +109,10 @@ def run_chat_mode(agent_executor, config):
             print("Goodbye Agent!")
             sys.exit(0)
 
-
-# Mode Selection
-def choose_mode():
-    """Choose whether to run in autonomous or chat mode based on user input."""
-    while True:
-        print("\nAvailable modes:")
-        print("1. chat    - Interactive chat mode")
-        print("2. auto    - Autonomous action mode")
-
-        choice = input("\nChoose a mode (enter number or name): ").lower().strip()
-        if choice in ["1", "chat"]:
-            return "chat"
-        elif choice in ["2", "auto"]:
-            return "auto"
-        print("Invalid choice. Please try again.")
-
-
 def main():
     """Start the chatbot agent."""
     agent_executor, config = initialize_agent()
-
-    mode = choose_mode()
-    if mode == "chat":
-        run_chat_mode(agent_executor=agent_executor, config=config)
-    elif mode == "auto":
-        run_autonomous_mode(agent_executor=agent_executor, config=config)
-
+    run_chat_mode(agent_executor=agent_executor, config=config)
 
 if __name__ == "__main__":
     print("Starting Agent...")
