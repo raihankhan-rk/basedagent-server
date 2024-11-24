@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+hypercorn
+redis
+python-dotenv
+pydantic
+langchain
+langchain-openai
+langgraph
+langchain-redis
+cdp-langchain
