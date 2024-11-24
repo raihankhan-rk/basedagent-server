@@ -59,7 +59,7 @@ async def get_api_key(
         status_code=HTTP_403_FORBIDDEN, detail="Could not validate API key"
     )
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/api/v1/chat", response_model=ChatResponse)
 async def chat_endpoint(
     request: ChatRequest,
     api_key: APIKey = Depends(get_api_key)
