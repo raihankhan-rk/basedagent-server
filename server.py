@@ -4,6 +4,7 @@ import os
 import json
 import logging
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 from redis_utils import RedisManager
 from main import initialize_agent
@@ -17,16 +18,22 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-app = FastAPI()
-# Redis for wallet data
-wallet_redis_manager = RedisManager(
-    url=os.getenv("WALLET_REDIS_URL")
-)
+# Create a state class to hold our connections
+class AppState:
+    def __init__(self):
+        self.wallet_redis = RedisManager(url=os.getenv("WALLET_REDIS_URL"))
+        self.chat_redis = RedisManager(url=os.getenv("CHAT_HISTORY_REDIS_URL"))
 
-# Redis for chat history
-chat_redis_manager = RedisManager(
-    url=os.getenv("CHAT_HISTORY_REDIS_URL")
-)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize shared state
+    app.state.connections = AppState()
+    yield
+    # Clean up connections
+    await app.state.connections.wallet_redis.close()
+    await app.state.connections.chat_redis.close()
+
+app = FastAPI(lifespan=lifespan)
 
 class ChatRequest(BaseModel):
     prompt: str
@@ -39,7 +46,7 @@ class ChatResponse(BaseModel):
 async def chat_endpoint(request: ChatRequest):
     try:
         # Get wallet data for the user
-        wallet_data = wallet_redis_manager.get_wallet_data(request.user)
+        wallet_data = await app.state.connections.wallet_redis.get_wallet_data(request.user)
         logger.info(f"Wallet data retrieved for user {request.user}: {wallet_data is not None}")
         
         # Initialize values for CdpAgentkitWrapper
@@ -49,14 +56,17 @@ async def chat_endpoint(request: ChatRequest):
         else:
             temp_wrapper = CdpAgentkitWrapper()
             initial_wallet = temp_wrapper.export_wallet()
-            wallet_redis_manager.save_wallet_data(request.user, json.loads(initial_wallet))
+            await app.state.connections.wallet_redis.save_wallet_data(
+                request.user, 
+                json.loads(initial_wallet)
+            )
             values = {"cdp_wallet_data": initial_wallet}
         
         # Get chat history
-        chat_history = chat_redis_manager.get_chat_history(request.user)
-        logger.info(f"Chat history retrieved for user {request.user}: {chat_history}")
+        chat_history = await app.state.connections.chat_redis.get_chat_history(request.user)
+        logger.info(f"Chat history retrieved for user {request.user}")
         
-        # Initialize agent
+        # Initialize agent for this request
         agent_executor, _ = initialize_agent(values)
         
         # Format the input with messages and history if exists
@@ -72,23 +82,24 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # Run the agent
-        response_chunks = []
-        for chunk in agent_executor.stream(
+        # Run the agent using invoke
+        response = await agent_executor.ainvoke(
             agent_input,
             agent_config
-        ):
-            if "agent" in chunk:
-                response_content = chunk["agent"]["messages"][0].content
-                response_chunks.append(response_content)
-            elif "tools" in chunk:
-                response_content = chunk["tools"]["messages"][0].content
-                response_chunks.append(response_content)
+        )
         
-        final_response = " ".join(response_chunks)
+        # Extract the final response content
+        if isinstance(response, dict) and "messages" in response:
+            messages = response["messages"]
+            final_response = next(
+                (msg.content for msg in reversed(messages) if msg.content),
+                "No response generated"
+            )
+        else:
+            final_response = str(response)
         
         # Save the conversation to Redis
-        chat_redis_manager.save_chat_history(
+        await app.state.connections.chat_redis.save_chat_history(
             request.user,
             messages + [HumanMessage(content=final_response)]
         )
