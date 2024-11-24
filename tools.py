@@ -35,6 +35,6 @@ def request_funds_on_mainnet(wallet: Wallet, amount: float, token: str) -> str:
     receiver = wallet.default_address.address_id
     
     # Generate the payment request link
-    payment_link = f"frameskit.vercel.app/payment?amount={amount}&token={token}&receiver={receiver}"
+    payment_link = f"https://frameskit.vercel.app/payment?amount={amount}&token={token}&receiver={receiver}"
     
     return f"Hey there! Can you send me {amount} {token} to this address: {payment_link}?"

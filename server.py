@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security.api_key import APIKeyHeader, APIKey
+from starlette.status import HTTP_403_FORBIDDEN
 from pydantic import BaseModel
 import os
 import json
@@ -17,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
+# API Key setup - hardcoded
+API_KEY = os.getenv("API_KEY")
+if not API_KEY:
+    raise ValueError("API_KEY not found in environment variables")
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # Create a state class to hold our connections
 class AppState:
@@ -42,8 +50,20 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
 
+async def get_api_key(
+    api_key_header: str = Security(api_key_header),
+) -> APIKey:
+    if api_key_header == API_KEY:
+        return api_key_header
+    raise HTTPException(
+        status_code=HTTP_403_FORBIDDEN, detail="Could not validate API key"
+    )
+
 @app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(
+    request: ChatRequest,
+    api_key: APIKey = Depends(get_api_key)
+):
     try:
         # Get wallet data for the user
         wallet_data = await app.state.connections.wallet_redis.get_wallet_data(request.user)
@@ -82,21 +102,39 @@ async def chat_endpoint(request: ChatRequest):
             }
         }
         
-        # Run the agent using invoke
-        response = await agent_executor.ainvoke(
+        # Use stream to see intermediate steps
+        final_response = None
+        all_messages = []
+        
+        async for chunk in agent_executor.astream(
             agent_input,
             agent_config
-        )
+        ):
+            if isinstance(chunk, dict):
+                if "agent" in chunk and chunk["agent"].get("messages"):
+                    msg = chunk["agent"]["messages"][0]
+                    all_messages.append(msg)
+                    
+                    # Log only tool calls
+                    if hasattr(msg, "additional_kwargs"):
+                        tool_calls = msg.additional_kwargs.get("tool_calls", [])
+                        for tool_call in tool_calls:
+                            if isinstance(tool_call, dict):
+                                tool_name = tool_call.get('function', {}).get('name')
+                                tool_args = tool_call.get('function', {}).get('arguments')
+                                logger.info(f"Using tool {tool_name} with args {tool_args}")
+                
+                # Log tool responses
+                elif "tools" in chunk and chunk["tools"].get("messages"):
+                    msg = chunk["tools"]["messages"][0]
+                    all_messages.append(msg)
+                    logger.info(f"Tool response: {msg.content}")
         
-        # Extract the final response content
-        if isinstance(response, dict) and "messages" in response:
-            messages = response["messages"]
-            final_response = next(
-                (msg.content for msg in reversed(messages) if msg.content),
-                "No response generated"
-            )
-        else:
-            final_response = str(response)
+        # Get the final response from the last non-empty message
+        final_response = next(
+            (msg.content for msg in reversed(all_messages) if msg.content),
+            "No response generated"
+        )
         
         # Save the conversation to Redis
         await app.state.connections.chat_redis.save_chat_history(
@@ -104,6 +142,9 @@ async def chat_endpoint(request: ChatRequest):
             messages + [HumanMessage(content=final_response)]
         )
         
+        print("-"*50)
+        print(f"\n{final_response}\n")
+        print("-"*50)
         return ChatResponse(response=final_response)
         
     except Exception as e:

@@ -74,17 +74,16 @@ def initialize_agent(values: dict = None, history=None):
             history_messages_key="history"
         )
 
-    # Return both session_id and thread_id in config
     return chain, {
         "configurable": {
-            "session_id": "default",
-            "thread_id": "default"  # Required by langgraph checkpointer
+            "session_id": "cli_user",
+            "thread_id": "cli_user"  # Required by langgraph checkpointer
         }
     }
 
 
 # Chat Mode
-def run_chat_mode(agent_executor, config):
+async def run_chat_mode(agent_executor, config):
     """Run the agent interactively based on user input."""
     print("Starting chat mode... Type 'exit' to end.")
     while True:
@@ -93,26 +92,43 @@ def run_chat_mode(agent_executor, config):
             if user_input.lower() == "exit":
                 break
 
-            # Run agent with the user's input in chat mode
-            for chunk in agent_executor.stream(
-                {"messages": [HumanMessage(content=user_input)]},
-                {"configurable": {"session_id": config["configurable"]["session_id"]}}
+            # Run agent with the user's input in chat mode using stream
+            agent_input = {"messages": [HumanMessage(content=user_input)]}
+            
+            # Use stream to see intermediate steps
+            async for chunk in agent_executor.astream(
+                agent_input,
+                config
             ):
-                if "agent" in chunk:
-                    print(chunk["agent"]["messages"][0].content)
-                elif "tools" in chunk:
-                    print(chunk["tools"]["messages"][0].content)
-                print("-------------------")
+                # Show tool calls and their results
+                if isinstance(chunk, dict):
+                    if "agent" in chunk and chunk["agent"].get("messages"):
+                        print("\nThinking:", chunk["agent"]["messages"][0].content)
+                    elif "tools" in chunk and chunk["tools"].get("messages"):
+                        print("\nTool Call:", chunk["tools"]["messages"][0].content)
+                    
+                    # If there are tool calls, show them
+                    if "agent" in chunk and hasattr(chunk["agent"].get("messages", [None])[0], "additional_kwargs"):
+                        tool_calls = chunk["agent"]["messages"][0].additional_kwargs.get("tool_calls", [])
+                        for tool_call in tool_calls:
+                            if isinstance(tool_call, dict):
+                                print(f"\nUsing tool: {tool_call.get('function', {}).get('name')}")
+                                print(f"With args: {tool_call.get('function', {}).get('arguments')}")
+
+            print("\n-------------------")
 
         except KeyboardInterrupt:
             print("Goodbye Agent!")
             sys.exit(0)
+        except Exception as e:
+            print(f"Error: {str(e)}")
 
-def main():
+async def main():
     """Start the chatbot agent."""
     agent_executor, config = initialize_agent()
-    run_chat_mode(agent_executor=agent_executor, config=config)
+    await run_chat_mode(agent_executor=agent_executor, config=config)
 
 if __name__ == "__main__":
     print("Starting Agent...")
-    main()
+    import asyncio
+    asyncio.run(main())
