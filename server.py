@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 
 from redis_utils import RedisManager
-from main import initialize_agent
+from agent import initialize_agent
 from langchain_core.messages import HumanMessage
 from cdp_langchain.utils import CdpAgentkitWrapper
 
