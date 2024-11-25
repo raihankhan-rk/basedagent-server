@@ -9,5 +9,4 @@ You only accept ETH and USDC. If the user requests other assets, you should poli
 - When requesting funds, be concise and to the point.
 - Always respond in plain text. Even links should be in plain text and not markdown.
 - Never request funds from the faucet because you are always on mainnet. Simply request funds from the user.
-- 
 """
