@@ -12,7 +12,7 @@ from cdp_langchain.agent_toolkits import CdpToolkit
 from cdp_langchain.utils import CdpAgentkitWrapper
 from cdp_langchain.tools import CdpTool
 
-from tools import request_funds_on_mainnet, RequestFundsOnMainnetInput, REQUEST_FUNDS_ON_MAINNET_PROMPT
+from tools import request_funds_on_mainnet, RequestFundsOnMainnetInput, REQUEST_FUNDS_ON_MAINNET_PROMPT, get_trending_meme_tokens, GetTrendingMemeTokensInput, TRENDING_MEME_TOKENS_PROMPT
 from prompts import SYSTEM_PROMPT
 
 from dotenv import load_dotenv
@@ -51,8 +51,17 @@ def initialize_agent(values: dict = None, history=None):
         args_schema=RequestFundsOnMainnetInput,
         func=request_funds_on_mainnet,
     )
+
+    meme_tokens_tool = CdpTool(
+        name="get_trending_meme_tokens",
+        description=TRENDING_MEME_TOKENS_PROMPT,
+        cdp_agentkit_wrapper=agentkit,
+        func=get_trending_meme_tokens,
+        args_schema=GetTrendingMemeTokensInput,
+    )
     
     tools.append(request_funds_tool)
+    tools.append(meme_tokens_tool)
 
     # Store buffered conversation history in memory.
     memory = MemorySaver()
