@@ -49,16 +49,10 @@ meme cryptocurrencies or want to analyze trending meme tokens in the market.
 
 class GetTrendingMemeTokensInput(BaseModel):
     """Input argument schema for fetching meme tokens."""
-    limit: Optional[int] = Field(
-        default=10,
-        description="Number of meme tokens to return (default: 10)"
-    )
+    pass
 
-def get_trending_meme_tokens(limit: Optional[int] = 10) -> List[Dict[str, str]]:
+def get_trending_meme_tokens() -> List[Dict[str, str]]:
     """Fetch trending meme tokens from CoinMarketCap.
-
-    Args:
-        limit (Optional[int]): Number of meme tokens to return. Defaults to 10.
 
     Returns:
         List[Dict[str, str]]: List of meme tokens with their details.
@@ -94,9 +88,6 @@ def get_trending_meme_tokens(limit: Optional[int] = 10) -> List[Dict[str, str]]:
                 "price": price.text.strip(),
                 "change_24h": change_value
             })
-            
-            if len(meme_tokens) >= limit:
-                break
                 
         return meme_tokens
             
